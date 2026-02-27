@@ -1,0 +1,203 @@
+---
+title: "Missing Values - Body Fat Index"
+format: html
+editor: visual
+---
+
+## =============================================================================
+
+## MHEDAS
+
+## Biomedical Statistics
+
+## Multiple linear regression
+
+## Source: <https://jse.amstat.org/datasets/fat.dat.txt>
+
+## =============================================================================
+
+\#' \#' We have a sample of 252 men who have had 19 different body measurements: \#' The body fat index calculated with the Brozek equation (PerBFat1), the same \#' index calculated with the Siri equation (PerBFat2), density (g/cm3), age \#' (years), weight (pounds), height (inches), adiposity index or BMI \#' (weight/height\^2), fat-free mass, and measures of the circumferences (cm) of \#' the neck, the chest, the abdomen, the hip, the thigh, the knee, the ankle, \#' the extended biceps, the forearm and the wrist. The data was taken at Penrose \#' in 1985 by Brigham Young University (Provo, Utah). The goal of the study \#' is to explain/predict for the body fat index using simple technical \#' measurements.
+
+# Libraries
+
+## =============================================================================
+
+```{r}
+library(dplyr) # Tidyverse 
+library(readr) # Tidyverse 
+library(ggplot2) # Tidyverse 
+library(mice) # multiple imputation !!!!
+library(missMethods) # Generate missing values !!!!
+```
+
+# Data
+
+## ===========================================================================
+
+```{r}
+d0 <- as_tibble(read.table('fatdat.txt', header=TRUE, sep='', stringsAsFactors = TRUE))
+
+names(d0) <- c("ID","PerBFat1","PerBFat2","Density","Age","Weight","Height","AdipInd","FatFreeW","Neck","Chest","Abdomen","Hip","Thigh","Knee","Ankle", "Biceps","Forearm", "Wrist")
+
+```
+
+##-- Descriptive analysis
+
+```{r}
+head(d0)
+tail(d0)
+summary(d0)
+```
+
+##-- Clean data (see previous scripts)
+
+# Remove ID, PerBFat2 and density (difficult to estimate)
+
+```{r}
+d <- d0 %>% dplyr::select(-ID,-PerBFat2,-Density) %>%                            # replace value
+  mutate(Height = replace(Height,  Height == min(Height), mean(Height)))
+```
+
+##-- Descriptive analysis
+
+```{r}
+pairs(d)
+summary(d)
+```
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% \# \# Goal: Inference with missing values (MAR or MCAR) \# #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% ##-- Generate missing values
+
+```{r}
+set.seed(12345)
+d_missing <- delete_MCAR(d, 0.2, c("Age","Weight")) #adding 20% of missing
+```
+
+missing completely at random
+
+# First step: Multiple imputation
+
+## =============================================================================
+
+mice package! mice() make.predictorMatrix()
+
+Predicor Matrix: for making imputations
+
+rows = variables that have missing values columns = variables of data set
+
+```{r}
+predictorMatrix <- make.predictorMatrix(d_missing, 
+                                        blocks = make.blocks(c("Age","Weight")))
+predictorMatrix
+```
+
+0: when age is missing, not using age to impute missing variable will not be used to impute missing variable
+
+```{r}
+predictorMatrix[1:2,1] <- c(0,0) # To avoid using the outcome to impute the missing values
+
+d_imp <- mice(d_missing, m = 5, blocks = make.blocks(c("Age","Weight")), #5 imputations for each missing value
+              predictorMatrix = predictorMatrix)
+```
+
+```{r}
+d_imp$imp$Age
+```
+
+wide range of age because age is more difficult to predict with remaining variables
+
+```{r}
+d_imp$imp$Weight
+```
+
+5 imputations for each of the 50 patients are done (20% of all) using remaining values -\> 5 datasets with different imputated values -\> apply model to each of the 5 data sets
+
+# Why are more similar the "weight" values along all iterations?
+
+# Second step: Fit the models (same as mod0, which takes into account age and weight)
+
+## =============================================================================
+
+```{r}
+mod_imp <- with(d_imp, lm(PerBFat1 ~ Age + Weight + Height + AdipInd + FatFreeW +
+                                     Neck + Chest + Abdomen + Hip + Thigh + Knee +
+                                     Ankle + Biceps + Forearm + Wrist))
+mod_imp$analyses
+```
+
+# Third step: Pool the results
+
+## =============================================================================
+
+```{r}
+mod_pool <- pool(mod_imp)
+summary(mod_pool)
+```
+
+-   statistical values for each variable
+-   estimate = mean of all 5 estimates of the 5 models
+
+##-- Comparing with mod0 without missing values
+
+```{r}
+mod0 <- lm(PerBFat1 ~ .,d) # Full model
+summary(mod_pool)[2:3,c(1:4,6)]
+```
+
+```{r}
+summary(mod0)$coefficients[2:3,]
+```
+
+CI = estimate +- 2\* std. error
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% \# \# Goal: Comparing complete case analysis depending on the type of missing values \# #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% ##-- Generate random data \# Real values --\> beta_0 = 0; beta_1 = 1; beta_2 = 1;
+
+```{r}
+set.seed(12345)
+n <- 1000
+X1 <- rnorm(n)                         # Predictor 1
+X2 <- X1 + rnorm(n,2)                  # Predictor 2
+Y <-  X1 + X2 + rnorm(n,0,4)           # Outcome
+data <- data.frame(Y=Y, X1=X1, X2=X2) # Dataset
+```
+
+# Missing data types -----------------------------------------------------------
+
+add 3 dif types of missing data
+
+```{r}
+patterns_mat <- matrix(c(1,1,0,
+                         1,0,1),ncol=3,byrow=TRUE)
+data_MCAR <- ampute(data, prop=0.5, patterns=patterns_mat, mech = "MCAR")$amp
+data_MAR  <- ampute(data, prop=0.5, patterns=patterns_mat, mech =  "MAR")$amp
+data_MNAR <- ampute(data, prop=0.5, patterns=patterns_mat, mech = "MNAR")$amp
+```
+
+# Models w/o imputation (complete case analysis) -------------------------------
+
+fit linear models
+
+```{r}
+m      <- lm(Y ~ X1 + X2,data)
+m_MCAR <- lm(Y ~ X1 + X2,data_MCAR)
+m_MAR  <- lm(Y ~ X1 + X2,data_MAR)
+m_MNAR <- lm(Y ~ X1 + X2,data_MNAR)
+round(cbind(coef(m),coef(m_MCAR),coef(m_MAR),coef(m_MNAR)),2)
+```
+
+MCAR (snd column) has estimations similar to model with data without missing values (1st column)
+
+# We can only impute MAR or MCAR (we will impute the MAR)
+
+# Multiple imputation with mice + with + pool
+
+results with imputations:
+
+```{r}
+predictorMatrix <- matrix(c(0,0,0,
+                            0,1,1,
+                            0,1,1),byrow=3,ncol=3)
+data_imp     <- mice(data_MAR,n=5,predictorMatrix=predictorMatrix)
+models_m_MAR <- with(data_imp,lm(Y ~ X1  + X2))
+pool_m_MAR   <- pool(models_m_MAR)
+summary(pool_m_MAR)
+```

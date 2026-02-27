@@ -1,0 +1,502 @@
+---
+title: "Multiple linear regression - Body Fat Index"
+format: html
+editor: visual
+---
+
+## =============================================================================
+
+## MHEDAS
+
+## Biomedical Statistics
+
+## Multiple linear regression - Body Fat Index
+
+## Source: https://jse.amstat.org/datasets/fat.dat.txt
+
+## =============================================================================
+
+\#' \#' We have a sample of 252 men who have had 19 different body measurements: \#' The body fat index calculated with the Brozek equation (PerBFat1), the same \#' index calculated with the Siri equation (PerBFat2), density (g/cm3), age \#' (years), weight (pounds), height (inches), adiposity index or BMI \#' (weight/height\^2), fat-free mass, and measures of the circumferences (cm) of \#' the neck, the chest, the abdomen, the hip, the thigh, the knee, the ankle, \#' the extended biceps, the forearm and the wrist. The data was taken at Penrose \#' in 1985 by Brigham Young University (Provo, Utah). The goal of the study \#' is to explain/predict for the body fat index using simple technical \#' measurements.
+
+```{r}
+# Libraries
+## =============================================================================
+library(car)         # Residual plots
+library(dplyr)       # Tidyverse
+library(readr)       # Tidyverse
+library(ggplot2)     # Tidyverse
+library(emmeans)     # Marginal effects
+library(effects)     # Plot effects
+library(mltools)     # RMSE
+library(caret)       # cross validation
+library(mice)        # multiple imputation
+library(missMethods) # Generate missing values 
+```
+
+```{r}
+# Data
+## =============================================================================
+
+d0 <- as_tibble(read.table('fatdat.txt',header=TRUE,sep='',stringsAsFactors = TRUE))
+
+names(d0) <- c("ID","PerBFat1","PerBFat2","Density","Age","Weight","Height","AdipInd","FatFreeW","Neck","Chest","Abdomen","Hip","Thigh","Knee","Ankle", "Biceps","Forearm", "Wrist")
+
+head(d0)
+```
+
+important for us: PerBFat1 (percentage of body fat)
+
+```{r}
+summary(d0)
+```
+
+##-- Descriptive bivariate analysis
+
+```{r}
+pairs(d0)
+```
+
+-   PerBfat1 and 2 are highly correlated
+-   PerBfat1 correlation with chest and abdomen
+-   hight: outlier
+-   weight: outlier
+
+# EX
+
+Read the data in the file fatdat.txt available on the virtual campus. Apply the function residualPlots of the package car to the model with the three predictors FatFreeW, Chest, and Thigh and the outcome PerBFat1. With a significance level of 5%, conclude which predictors need a quadratic transformation.
+
+```{r}
+modex <- lm(PerBFat1 ~ FatFreeW + Chest + Thigh, data=d0)
+residualPlots(modex)
+```
+
+# EX
+
+```{r}
+modex2 <- lm(PerBFat1 ~ Thigh, d0)
+summary(modex2)
+```
+
+```{r}
+plot(modex2)
+```
+
+```{r}
+newdat <- data.frame(Thigh = 60)
+pred <- predict(modex2, newdata = newdat, interval = "confidence", level = 0.90)
+pred
+```
+
+FatFreeW, Chest, and Thigh and the outcome PerBFat1.
+
+```{r}
+modex4 <- lm(PerBFat1 ~ FatFreeW + Chest + Thigh, d0)
+
+vif(modex4)
+```
+
+```{r}
+modex6 <- lm(PerBFat1 ~ Thigh, data = d0)
+newdat2 <- data.frame(Thigh = 60)
+pred <- predict(modex6,
+                newdata = newdat2,
+                interval = "prediction",
+                level = 0.99)
+pred
+```
+
+##-- Clean data
+
+# Remove ID, PerBFat2 and density (difficult to estimate)
+
+```{r}
+d <- d0 %>% dplyr::select(-ID,-PerBFat2,-Density)
+```
+
+# EX
+
+If a stepwise variable selection method using the BIC criterion is applied starting from the model with all variables (after previously removing ID, PerBFat2, and Density), which variable will be the first to be eliminated?
+
+```{r}
+modex3 <- lm(PerBFat1 ~ .,d)
+step(modex3, k = log(nrow(d))) 
+```
+
+# Maximum Weight --\> Possible
+
+check observed outlier
+
+```{r}
+d[which.max((d$Weight)),]             # Person with maximum weight
+```
+
+```{r}
+max(d$Weight)*0.453                   # lbs --> maximum weight (kg)
+```
+
+high weight! -\> check hight to see if it could be true:
+
+```{r}
+d$Height[which.max((d$Weight))]*2.54  # inch --> height (cm) in person with maximum weight
+```
+
+tall person, possible heavy
+
+```{r}
+which.max((d$Weight))==which.max((d$Neck))
+```
+
+also biggest neck: probably overweight
+
+# Minimum Height --\> Improbable
+
+```{r}
+d[which.min((d$Height)),]             # Person with minimum height 
+```
+
+```{r}
+min(d$Height)*2.54                    # inch --> minimum height (cm)
+```
+
+looks like an error
+
+```{r}
+d$Weight[which.min((d$Height))]*0.453 # lbs --> weight (kg) in person with maximum weight
+```
+
+-\> impute the outlier with mean of heights:
+
+```{r}
+d <- d %>%                            # replace value
+  mutate(Height = replace(Height,  Height == min(Height), mean(Height)))
+```
+
+##-- Descriptive analysis
+
+```{r}
+pairs(d)
+```
+
+no outlier
+
+```{r}
+summary(d)
+```
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% \# \# Goal: Explanatory \# #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+# Model fit
+
+## =============================================================================
+
+# mod0 \<- lm(PerBFat1 \~ 1,d) \# Null model
+
+```{r}
+mod0 <- lm(PerBFat1 ~ .,d) # Full model
+summary(mod0)
+```
+
+# Automatic variable selection
+
+## =============================================================================
+
+```{r}
+mod1 <- step(mod0, k = log(nrow(d))) # BIC criterion because of explanatory goal
+#k = key value log(sample size) (defined for AIC criteria)
+summary(mod1)
+```
+
+# Collinearity
+
+linearity between explanatory variables \## =============================================================================
+
+```{r}
+vif(mod1)
+```
+
+avoid vif \> 5 -\> remve AdipInd
+
+```{r}
+mod2 <- update(mod1,.~.-AdipInd) # It is calculated from weight and height
+vif(mod2)
+```
+
+all values lowerde.
+
+remove weight
+
+```{r}
+mod3 <- update(mod2,.~.-Weight)
+vif(mod3)
+```
+
+remove highest vfi:
+
+```{r}
+mod4 <- update(mod3,.~.-Abdomen)
+vif(mod4)
+```
+
+```{r}
+summary(mod4)
+```
+
+# Automatic selection:
+
+```{r}
+mod5 <- step(mod4,k=log(nrow(d)))
+summary(mod5)
+```
+
+# Validation 1
+
+## =============================================================================
+
+##-- First alternative
+
+```{r}
+par(mfrow=c(2,2))
+plot(mod5)
+```
+
+1.  plot: linearity (slightly curved, we will try to reduce it). Homoscedasticity: constant variability 2.: Normal distribution of residuals 3.: Homoscedasticity: constant variability, horizontal line 4.: all points are between dashed lines: no posterior influentence of any observation
+
+##-- Independence versus order? Does that make sense?
+
+```{r}
+res   <- residuals(mod5)
+d_ind <- tibble(id=1:length(res),res=res)
+ggplot(d_ind,aes(x=id,y=res)) + geom_line() + geom_hline(color="red",yintercept = 0)
+```
+
+independent
+
+##-- Second alternative (car package)
+
+```{r}
+residualPlots(mod5)
+```
+
+observ quadratical/linear relationships -\> add quadratic term
+
+# Transformations
+
+## =============================================================================
+
+##-- Polynomial transformations over predictors to add quadratic term
+
+```{r}
+mod6 <- lm(PerBFat1 ~ poly(FatFreeW,2) + Height + Chest +
+                      Thigh + Wrist, d) 
+residualPlots(mod6)
+```
+
+quadratic term for all:
+
+```{r}
+mod7 <- lm(PerBFat1 ~ poly(FatFreeW,2) + 
+                      poly(Chest,2) +
+                      poly(Thigh,2) +
+                      poly(Wrist,2) + 
+                      poly(Height,2), d)
+residualPlots(mod7)
+```
+
+corrected all curvatueres
+
+```{r}
+par(mfrow=c(2,2))
+plot(mod7)
+```
+
+all assumptions met
+
+##-- Influential and outlier observations
+
+```{r}
+influenceIndexPlot(mod7)
+```
+
+```{r}
+outlierTest(mod7)
+```
+
+Bonferroni p = adjusted p alue -\> ot significant, no worries
+
+```{r}
+d[39,]  # An influential observation
+```
+
+```{r}
+d[239,] # Outlier
+```
+
+# Interpretation
+
+## =============================================================================
+
+##-- Graphical "Effects"
+
+```{r}
+plot(allEffects(mod7))
+```
+
+just slight curves
+
+##-- Marginal response wanna see precited outcome, expected halues = emmeans
+
+```{r}
+emmeans3 <- emmeans(mod7,~ Height,at=(list('Height'=seq(65,75,2)))) #predictions with specific height
+emmeans3
+```
+
+```{r}
+pairs(emmeans3) #check all exact predictions pairwise
+```
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% \# \# Goal: Prediction !!! use AIC criteria \# #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+# First method: Split the sample
+
+## =============================================================================
+
+# As there is no temporal or spatial variable that serves to split the sample,
+
+# we randomly split the sample (we could use the contienents to split)
+
+```{r}
+n <- nrow(d)     # Sample size
+p_train <- 0.7   # Probability to be included in the train sample
+set.seed(12345)
+train_logical <- sample(c(FALSE,TRUE),n,rep=TRUE,prob=c(1-p_train,p_train))
+train <- d %>% filter(train_logical)
+test  <- d %>% filter(!train_logical)
+
+# Fit the model
+## =============================================================================
+modp0 <- lm(PerBFat1 ~ .,train) #start with full model
+modp1 <- step(modp0)              # Based on AIC, select variables
+```
+
+no interest in coefficients, just in predictive performance
+
+# Apparent Predictive performance
+
+test on training data set \## =============================================================================
+
+```{r}
+d_pred1 <- tibble(pr  = predict(modp1), 
+                  obs = train %>% na.omit %>% pull(PerBFat1))
+```
+
+##-- Predictive performance
+
+```{r}
+ggplot(d_pred1,aes(x=pr,y=obs)) + 
+  geom_point() +
+  geom_abline(intercept=0,slope=1,linetype=2,color="red") +
+  xlab('Prediction') + ylab('Observed')
+```
+
+looks good, but it is training data.
+
+more validation of predictive performance: ##-- RMSE
+
+```{r}
+(RMSE1 <- rmse(d_pred1$pr, d_pred1$obs))   # RMSE
+sd(train$PerBFat1)                         # SD of PerBFat1
+```
+
+reduced uncertainty by \~5
+
+# Predictive performance
+
+## =============================================================================
+
+```{r}
+d_pred2 <- tibble(pr  = predict(modp1, test), 
+                  obs = test %>% na.omit %>% pull(PerBFat1)) #test data
+
+##-- Predictive performance
+ggplot(d_pred2,aes(x=pr,y=obs)) + 
+  geom_point() +
+  geom_abline(intercept=0,slope=1,linetype=2,color="red")
+```
+
+high percentages of bfat: model overestimates percentage (might be corrected)
+
+##-- RMSE
+
+```{r}
+(rmse(d_pred2$pr, d_pred2$obs))          # RMSE
+sd(test$PerBFat1)                        # SD of PerBFat1
+```
+
+reduction of uncertanty! (dif of RMSE and SD) !!!
+
+# Second method: Cross-validation
+
+with package caret: trainControl() split data set in several (ex 10 fold) subsamples 1/10 as test sample \## =============================================================================
+
+# Assess the predictive performance (1 repeat)
+
+## ===========================================
+
+# Define training control
+
+```{r}
+set.seed(12345) 
+train_control <- trainControl(method = "cv", number = 10)
+
+modp3 <- train(PerBFat1 ~., data = d, method = "lm",
+               trControl = train_control)
+summary(modp3)
+```
+
+high R squared! close 1
+
+```{r}
+print(modp3)
+```
+
+mean absolut error = MAE
+
+```{r}
+modp3$resample
+```
+
+different errors in different folds (subsamples). idealy the would be similar
+
+```{r}
+apply(modp3$resample[,1:3],2,mean)
+```
+
+# Assess the predictive performance (5 repeats)
+
+repeat procedure 5 times \## =========================================== \# Define training control
+
+```{r}
+set.seed(12345) 
+train_control <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+modp4 <- train(PerBFat1 ~., data = d, method = "lm",
+               trControl = train_control)
+summary(modp4)
+```
+
+similar summary as before
+
+```{r}
+print(modp4)
+```
+
+```{r}
+modp4$resample
+```
+
+more stable, robust results
+
+```{r}
+apply(modp3$resample[,1:3],2,mean)
+```
+
+To fit a model: know before the final goal! ex. a) prediction -\> AIC for selection better. b) explanatory goal -\> BIC statistics, more parsimonious model -\> each has different validation
