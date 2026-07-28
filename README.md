@@ -85,6 +85,12 @@ Key results:
 
 ---
 
+## Reproducing this analysis
+
+Install the dependencies with `setup.R` (R)
+
+---
+
 ## Skills Demonstrated
 
 - Advanced regression modeling
