@@ -1,0 +1,104 @@
+---
+title: "Target leakage check: FatFreeW as a predictor of PerBFat1"
+format: pdf
+---
+
+## Why this file exists
+
+The main analysis (`Multiple linear regression - Body Fat Index.qmd`) retains
+`FatFreeW` (fat-free mass) in the final model. `FatFreeW` is not an independent
+body measurement. It is derived from the outcome:
+
+$$\text{FatFreeW} = \text{Weight} \times \left(1 - \frac{\text{PerBFat1}}{100}\right)$$
+
+so together with `Weight`, which is also in the dataset, it reconstructs the
+outcome almost exactly. Any model containing it reports a fit that cannot be
+achieved on a new man with a tape measure, which is the situation the study is
+for.
+
+`Density` and `PerBFat2` were already excluded at the start of the main analysis
+for exactly this reason. `FatFreeW` belongs in that same exclusion list.
+
+This file quantifies the leak and refits the model without it.
+
+```{r setup, message=FALSE}
+d0 <- read.table("../data/fatdat.txt")
+names(d0) <- c("ID","PerBFat1","PerBFat2","Density","Age","Weight","Height",
+               "AdipInd","FatFreeW","Neck","Chest","Abdomen","Hip","Thigh",
+               "Knee","Ankle","Biceps","Forearm","Wrist")
+n <- nrow(d0)
+```
+
+## 1. The leak, demonstrated arithmetically
+
+```{r}
+recon <- 100 * (1 - d0$FatFreeW / d0$Weight)
+c(correlation   = cor(recon, d0$PerBFat1),
+  mean_abs_diff = mean(abs(recon - d0$PerBFat1)),
+  max_abs_diff  = max(abs(recon - d0$PerBFat1)))
+```
+
+The correlation is 0.996 and the mean absolute difference is under 0.1
+percentage points. The single large discrepancy is a known inconsistent record
+in the Penrose data, not a failure of the identity.
+
+```{r}
+summary(lm(PerBFat1 ~ FatFreeW + Weight, d0))$r.squared
+```
+
+Those two variables alone explain about 96% of the outcome. That number is
+arithmetic, not prediction. Its cross-validated error is reported in section 5,
+after the helper below is defined.
+
+## 2. Ten-fold cross-validation helper
+
+```{r}
+cv_rmse <- function(formula, data, k = 10, seed = 1) {
+  set.seed(seed)
+  folds <- split(sample(nrow(data)), rep(1:k, length.out = nrow(data)))
+  err <- unlist(lapply(folds, function(te) {
+    fit  <- lm(formula, data = data[-te, ])
+    pred <- predict(fit, newdata = data[te, ])
+    pred - data[[all.vars(formula)[1]]][te]
+  }))
+  sqrt(mean(err^2))
+}
+```
+
+## 3. The model as originally reported
+
+```{r}
+mod_reported <- lm(PerBFat1 ~ poly(FatFreeW, 2) + Height + Chest + Thigh + Wrist, d0)
+c(R2 = summary(mod_reported)$r.squared,
+  CV_RMSE = cv_rmse(PerBFat1 ~ poly(FatFreeW, 2) + Height + Chest + Thigh + Wrist, d0))
+```
+
+## 4. The same selection with FatFreeW excluded from the candidate set
+
+`FatFreeW` is removed before stepwise selection runs, not dropped afterwards.
+Dropping it at the end would already have let it shape the selection path.
+
+```{r}
+d_clean <- subset(d0, select = -c(ID, PerBFat2, Density, FatFreeW))
+mod_full  <- lm(PerBFat1 ~ ., d_clean)
+mod_clean <- step(mod_full, k = log(n), trace = 0)   # BIC, explanatory goal
+formula(mod_clean)
+c(R2 = summary(mod_clean)$r.squared,
+  CV_RMSE = cv_rmse(formula(mod_clean), d_clean))
+```
+
+## 5. Reference points
+
+```{r}
+c(abdomen_only_R2 = summary(lm(PerBFat1 ~ Abdomen, d0))$r.squared,
+  abdomen_only_CV = cv_rmse(PerBFat1 ~ Abdomen, d0),
+  leak_only_CV    = cv_rmse(PerBFat1 ~ FatFreeW + Weight, d0),
+  sd_outcome      = sd(d0$PerBFat1))
+```
+
+## Conclusion
+
+Excluding `FatFreeW` costs roughly 0.13 of $R^2$ and raises cross-validated
+error modestly. The remaining model uses only measurements that can be taken
+with a tape measure and a scale, which is what the study set out to do. The
+corrected figures are the ones reported in the README.
