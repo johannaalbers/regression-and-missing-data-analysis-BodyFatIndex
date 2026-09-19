@@ -97,10 +97,9 @@ Topics covered:
 
 Key results:
 
-- MCAR: minimal bias
-- MAR: requires imputation for unbiased estimates
-- MNAR: imputation insufficient
-- Pooled estimates closely matched full-data model
+- Complete-case bias grows from MCAR to MAR to MNAR (X2 coefficient 0.93, 0.85, 0.81 against a true 0.98)
+- Multiple imputation was run on the MAR data only: it recovered X1 (0.98) but left X2 at 0.86
+- Imputation was not attempted under MNAR, because the observed data cannot explain why those values are missing
 
 ---
 
